@@ -10,6 +10,9 @@ AutoFrotz v2 solves this by decomposing the problem into specialized agents and 
 
 The system is organized into five major components that communicate through the orchestrator. Think of the orchestrator as a dispatcher sitting at the center of a hub, where each spoke is a specialist.
 
+**Important** Tableau Rosa Principal
+None of the prompts or agent design should be specialized for any specific game. For example, "Grue" should never be mentioned in the prompts, or anything else that would give the LLM hints about how to play the game. 
+
 **Game Interface** handles all communication with the Frotz interpreter. It wraps pyFrotz and exposes a clean API: send a command string, receive the game's text response. It also handles save/restore operations and detects terminal game states (death, victory). The game interface is the only component that touches the actual game process.
 
 **Map Manager** maintains a directed graph of rooms and connections. It receives raw game output each turn and uses a lightweight LLM call to parse room transitions, exit lists, and description changes. It provides pathfinding queries so the game agent can navigate efficiently ("how do I get from the cellar to the trophy case?"). It tracks which exits have never been traversed, enabling systematic exploration.

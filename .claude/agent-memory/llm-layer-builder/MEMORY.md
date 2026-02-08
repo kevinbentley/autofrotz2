@@ -59,3 +59,96 @@ The spec describes provider-level PROMPT caching, not response-level caching:
 - **Local/OpenAI-compatible**: Skip all caching logic.
 
 Do NOT implement a `CachingLLMProvider` wrapper pattern for response caching unless specifically asked.
+
+## Implementation Notes
+
+### SDK Import Patterns
+- **OpenAI**: `from openai import OpenAI, OpenAIError`
+- **Anthropic**: `from anthropic import Anthropic, AnthropicError`
+- **Gemini**: `from google import genai` and `from google.genai import types`
+
+### Anthropic Cache Control
+System prompt with caching:
+```python
+system=[{
+    "type": "text",
+    "text": system_prompt,
+    "cache_control": {"type": "ephemeral"}
+}]
+```
+
+### Anthropic Tool Use for JSON
+Define tool with schema, force with `tool_choice`:
+```python
+tools=[{"name": "extract", "description": "...", "input_schema": schema}],
+tool_choice={"type": "tool", "name": "extract"}
+```
+Extract from response: `block.input` where `block.type == "tool_use"`
+
+### Gemini Content Format
+Convert messages to Content objects:
+```python
+contents = [
+    types.Content(
+        role="user" if msg["role"] == "user" else "model",
+        parts=[types.Part(text=msg["content"])]
+    )
+    for msg in messages
+]
+```
+
+### Gemini JSON Mode
+```python
+config = types.GenerateContentConfig(
+    system_instruction=system_prompt,
+    response_mime_type="application/json",
+    response_schema=schema,
+    ...
+)
+```
+
+### Cost Estimation Rates (2025 approximate)
+- **GPT-4o**: $5/1M in, $15/1M out
+- **GPT-4o-mini**: $0.15/1M in, $0.60/1M out
+- **Claude Sonnet 4**: $3/1M in, $15/1M out (cache write +25%, cache read -90%)
+- **Gemini 2.0 Flash**: $0.075/1M in (<128k), $0.30/1M out
+
+### Error Handling Pattern
+Always wrap provider exceptions and log them:
+```python
+try:
+    # API call
+except ProviderError as e:
+    logger.error(f"Provider API error: {e}")
+    raise RuntimeError(f"Provider completion failed: {e}") from e
+```
+
+### JSON Retry Pattern
+Retry up to 3 times on JSON parse failure, adding error context to messages:
+```python
+messages.append({"role": "assistant", "content": text})
+messages.append({
+    "role": "user",
+    "content": f"That was not valid JSON. Error: {e}. Please retry."
+})
+```
+
+## Testing Strategy
+
+All factory tests pass without requiring real API keys by:
+- Using mock configurations
+- Using monkeypatch for environment variables
+- Testing provider instantiation without actual API calls
+- Verifying correct attributes are set on provider instances
+
+## Files Created
+
+All files in `/home/ubuntu/workspace/autofrotz2/autofrotz/llm/`:
+- `base.py` - Abstract base class
+- `openai_llm.py` - OpenAI provider (344 lines)
+- `claude_llm.py` - Anthropic provider (270 lines)
+- `gemini_llm.py` - Gemini provider (225 lines)
+- `factory.py` - Factory and config loader (137 lines)
+- `__init__.py` - Module exports
+
+Test file: `/home/ubuntu/workspace/autofrotz2/tests/test_llm_factory.py` (14 tests, all passing)

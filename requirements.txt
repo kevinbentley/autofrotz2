@@ -1,0 +1,9 @@
+pyfrotz
+networkx
+fastapi
+uvicorn[standard]
+websockets
+openai
+anthropic
+google-genai
+pytest
