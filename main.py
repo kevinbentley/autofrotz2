@@ -8,6 +8,9 @@ adventure games via the Frotz Z-Machine interpreter.
 import argparse
 import logging
 import sys
+import threading
+
+import uvicorn
 
 from autofrotz.llm.factory import load_config
 from autofrotz.orchestrator import Orchestrator
@@ -85,6 +88,24 @@ def main() -> None:
                 logger.info(f"Registered hook: {hook_name}")
             else:
                 logger.warning(f"Unknown hook: {hook_name}")
+
+        # Start web server in a background thread so the game and web UI
+        # share the same process (and the same connection_manager for
+        # live WebSocket updates).
+        web_config = config.get("web_server", {})
+        web_host = web_config.get("host", "0.0.0.0")
+        web_port = web_config.get("port", 8080)
+
+        from autofrotz.web.server import app as web_app
+
+        server_thread = threading.Thread(
+            target=uvicorn.run,
+            args=(web_app,),
+            kwargs={"host": web_host, "port": web_port, "log_level": "warning"},
+            daemon=True,
+        )
+        server_thread.start()
+        logger.info(f"Web UI available at http://{web_host}:{web_port}")
 
         orchestrator.run()
 

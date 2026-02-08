@@ -7,6 +7,7 @@ them with available items to suggest solutions, and monitors for stuck behavior.
 
 import json
 import logging
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -75,12 +76,12 @@ class PuzzleAgent:
         map_summary: dict,
         recent_actions: list[tuple[str, str]],
         current_turn: int,
-    ) -> tuple[list[Puzzle], list[PuzzleSuggestion]]:
+    ) -> tuple[list[Puzzle], list[PuzzleSuggestion], list[int]]:
         """
-        Detect new puzzles and generate solution suggestions.
+        Detect new puzzles, identify solved puzzles, and generate suggestions.
 
-        Performs both puzzle detection and cross-referencing in a single
-        LLM call for efficiency.
+        Performs puzzle detection, resolution checking, and cross-referencing
+        in a single LLM call for efficiency.
 
         Args:
             game_output: Latest game output text.
@@ -92,7 +93,7 @@ class PuzzleAgent:
             current_turn: Current turn number.
 
         Returns:
-            Tuple of (new_puzzles, suggestions).
+            Tuple of (new_puzzles, suggestions, solved_puzzle_ids).
         """
         # Build context message for the puzzle agent
         user_message = self._build_evaluation_message(
@@ -121,6 +122,10 @@ class PuzzleAgent:
                         "required": ["description", "location"],
                     },
                 },
+                "solved_puzzles": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                },
                 "suggestions": {
                     "type": "array",
                     "items": {
@@ -142,7 +147,7 @@ class PuzzleAgent:
                     },
                 },
             },
-            "required": ["new_puzzles", "suggestions"],
+            "required": ["new_puzzles", "solved_puzzles", "suggestions"],
         }
 
         try:
@@ -165,14 +170,26 @@ class PuzzleAgent:
                 latency_ms=0.0,
             )
 
-            # Process new puzzles
+            # Process new puzzles (with deduplication)
+            existing_puzzles = self.database.get_puzzles(self.game_id, status="open")
+            existing_puzzles += self.database.get_puzzles(self.game_id, status="in_progress")
+
             new_puzzles = []
             for puzzle_data in result.get("new_puzzles", []):
                 room_id = current_room.room_id if current_room else "unknown"
+                location = puzzle_data.get("location", room_id)
+                description = puzzle_data["description"]
+
+                # Dedup: skip if an existing open puzzle at the same location
+                # shares significant keyword overlap
+                if self._is_duplicate(description, location, existing_puzzles):
+                    logger.debug(f"Skipping duplicate puzzle: {description}")
+                    continue
+
                 puzzle = Puzzle(
-                    description=puzzle_data["description"],
+                    description=description,
                     status="open",
-                    location=puzzle_data.get("location", room_id),
+                    location=location,
                     related_items=puzzle_data.get("related_items", []),
                     attempts=[],
                     created_turn=current_turn,
@@ -181,7 +198,13 @@ class PuzzleAgent:
                 puzzle_id = self.database.save_puzzle(self.game_id, puzzle)
                 puzzle.puzzle_id = puzzle_id
                 new_puzzles.append(puzzle)
+                existing_puzzles.append(puzzle)  # Prevent dupes within same batch
                 logger.info(f"New puzzle detected: {puzzle.description} (id={puzzle_id})")
+
+            # Process solved puzzles
+            solved_ids = result.get("solved_puzzles", [])
+            for pid in solved_ids:
+                self.mark_solved(pid, current_turn)
 
             # Process suggestions
             suggestions = []
@@ -199,12 +222,12 @@ class PuzzleAgent:
                     f"{suggestion.proposed_action}"
                 )
 
-            return new_puzzles, suggestions
+            return new_puzzles, suggestions, solved_ids
 
         except Exception as e:
             logger.error(f"Puzzle agent evaluation failed: {e}")
             self._last_response = None
-            return [], []
+            return [], [], []
 
     def _build_evaluation_message(
         self,
@@ -304,6 +327,55 @@ class PuzzleAgent:
             )
 
         return "\n".join(parts)
+
+    @staticmethod
+    def _extract_keywords(text: str) -> set[str]:
+        """Extract significant words from a description, ignoring stopwords."""
+        stopwords = {
+            "a", "an", "the", "is", "are", "was", "were", "be", "been",
+            "being", "have", "has", "had", "do", "does", "did", "will",
+            "would", "could", "should", "may", "might", "can", "shall",
+            "to", "of", "in", "for", "on", "with", "at", "by", "from",
+            "it", "its", "this", "that", "these", "those", "there",
+            "and", "or", "but", "not", "no", "if", "so", "as", "than",
+            "into", "through", "during", "before", "after", "above",
+            "below", "between", "under", "over", "up", "down", "out",
+            "something", "whatever", "beneath", "blocking", "preventing",
+            "access", "potentially",
+        }
+        words = set(re.findall(r"[a-z]+", text.lower()))
+        return words - stopwords
+
+    def _is_duplicate(
+        self, description: str, location: str, existing: list[Puzzle]
+    ) -> bool:
+        """Check if a puzzle duplicates an existing open puzzle."""
+        new_keywords = self._extract_keywords(description)
+        if not new_keywords:
+            return False
+
+        for existing_puzzle in existing:
+            # Must be at the same location (or either is unknown)
+            loc_match = (
+                existing_puzzle.location == location
+                or existing_puzzle.location == "unknown"
+                or location == "unknown"
+            )
+            if not loc_match:
+                continue
+
+            existing_keywords = self._extract_keywords(existing_puzzle.description)
+            if not existing_keywords:
+                continue
+
+            # If more than 40% of the new puzzle's keywords overlap with an
+            # existing one, consider it a duplicate
+            overlap = new_keywords & existing_keywords
+            overlap_ratio = len(overlap) / min(len(new_keywords), len(existing_keywords))
+            if overlap_ratio >= 0.4:
+                return True
+
+        return False
 
     def record_attempt(self, puzzle_id: int, action: str, result: str) -> None:
         """

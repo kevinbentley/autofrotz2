@@ -358,32 +358,55 @@ function connectLive(gameId) {
     };
 }
 
+async function refreshAllPanels() {
+    if (!state.currentGameId) return;
+    try {
+        const [items, puzzles, mapData, metrics] = await Promise.all([
+            fetchItems(state.currentGameId),
+            fetchPuzzles(state.currentGameId),
+            fetchMap(state.currentGameId),
+            fetchMetrics(state.currentGameId)
+        ]);
+        updateInventory(items);
+        updatePuzzles(puzzles);
+        renderMap(mapData);
+        updateMetrics(metrics);
+    } catch (e) {
+        console.error('Error refreshing panels:', e);
+    }
+}
+
 function handleLiveEvent(event) {
     switch (event.type) {
         case 'connected':
             console.log('Live feed connected:', event.message);
             break;
         case 'turn':
-            appendToTranscript(event.turn_number, event.command, event.output, event.reasoning);
-            state.currentRoom = event.room_id;
+            appendToTranscript(event.turn_number, event.command, event.output, event.agent_reasoning);
+            if (event.room && event.room.id) {
+                state.currentRoom = event.room.id;
+            }
+            // Refresh all panels from DB after each turn
+            refreshAllPanels();
             break;
         case 'room_enter':
             state.currentRoom = event.room_id;
             break;
-        case 'inventory_update':
-            updateInventory(event.items);
+        case 'item_found':
+        case 'item_taken':
+        case 'puzzle_found':
+        case 'puzzle_solved':
+        case 'maze_detected':
+        case 'maze_completed':
+            // Refresh panels on any state-changing event
+            refreshAllPanels();
             break;
-        case 'puzzle_update':
-            updatePuzzles(event.puzzles);
-            break;
-        case 'map_update':
-            renderMap(event.map);
-            break;
-        case 'metrics_update':
-            updateMetrics(event.metrics);
+        case 'game_end':
+            refreshAllPanels();
+            updateModeIndicator('replay');
             break;
         default:
-            console.log('Unknown event type:', event.type);
+            console.log('Live event:', event.type, event);
     }
 }
 
@@ -537,6 +560,35 @@ async function init() {
         option.textContent = `${game.game_file} - ${game.status} (${game.total_turns || 0} turns)`;
         selector.appendChild(option);
     });
+
+    // Auto-select the latest active game, or the most recent game
+    const activeGame = games.find(g => g.status === 'playing');
+    const latestGame = activeGame || (games.length > 0 ? games[games.length - 1] : null);
+    if (latestGame) {
+        selector.value = latestGame.game_id;
+        // Trigger selection
+        onGameSelected();
+    }
+
+    // Periodically refresh the game list to pick up new games
+    setInterval(async () => {
+        if (state.currentMode !== 'live') return;
+        try {
+            const freshGames = await fetchGames();
+            // Update dropdown options
+            const existingIds = new Set(Array.from(selector.options).map(o => o.value));
+            freshGames.forEach(g => {
+                if (!existingIds.has(String(g.game_id))) {
+                    const option = document.createElement('option');
+                    option.value = g.game_id;
+                    option.textContent = `${g.game_file} - ${g.status} (${g.total_turns || 0} turns)`;
+                    selector.appendChild(option);
+                }
+            });
+        } catch (e) {
+            // Ignore refresh errors
+        }
+    }, 10000);
 
     // Event listeners
     selector.addEventListener('change', onGameSelected);

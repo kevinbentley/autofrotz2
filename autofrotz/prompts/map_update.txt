@@ -42,26 +42,24 @@ Return your analysis as JSON matching this schema:
 
 Command: north
 Output:
-West of House
-You are standing in an open field west of a white house, with a boarded front door.
-There is a small mailbox here.
-Exits: north, south, west
+Village Square
+You are standing in the center of a small village. A stone well sits in the middle of the square. To the north is a tall church, and a cobblestone road leads east and west.
 
 Expected JSON:
 {
   "room_changed": true,
-  "room_name": "West of House",
-  "description": "You are standing in an open field west of a white house, with a boarded front door.",
-  "exits": ["north", "south", "west"],
+  "room_name": "Village Square",
+  "description": "You are standing in the center of a small village. A stone well sits in the middle of the square. To the north is a tall church, and a cobblestone road leads east and west.",
+  "exits": ["north", "east", "west"],
   "is_dark": false,
-  "items_seen": ["mailbox"]
+  "items_seen": ["well"]
 }
 
 ## Example 2: Action in same room
 
-Command: examine mailbox
+Command: examine well
 Output:
-The small mailbox is closed.
+The stone well is old and weathered. A rope hangs into its depths.
 
 Expected JSON:
 {
@@ -77,14 +75,14 @@ Expected JSON:
 
 Command: down
 Output:
-Cellar
-It is pitch black. You are likely to be eaten by a grue.
+Underground Passage
+It is pitch black. You can't see a thing.
 
 Expected JSON:
 {
   "room_changed": true,
-  "room_name": "Cellar",
-  "description": "It is pitch black. You are likely to be eaten by a grue.",
+  "room_name": "Underground Passage",
+  "description": "It is pitch black. You can't see a thing.",
   "exits": [],
   "is_dark": true,
   "items_seen": []
@@ -95,13 +93,13 @@ Expected JSON:
 Command: east
 Output:
 Forest Path
-You are on a forest path. The trees are thick here. You can continue east or return west to the clearing. A rusty sword lies on the ground.
+You are on a narrow path through dense woods. The trail continues east or you can head back west to the clearing. A rusty sword lies on the ground.
 
 Expected JSON:
 {
   "room_changed": true,
   "room_name": "Forest Path",
-  "description": "You are on a forest path. The trees are thick here. You can continue east or return west to the clearing.",
+  "description": "You are on a narrow path through dense woods. The trail continues east or you can head back west to the clearing.",
   "exits": ["east", "west"],
   "is_dark": false,
   "items_seen": ["sword"]

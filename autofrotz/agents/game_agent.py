@@ -160,12 +160,19 @@ class GameAgent:
         # Map summary
         map_summary = context.get("map_summary", {})
         if map_summary:
-            parts.append(
+            map_text = (
                 f"== MAP ==\n"
                 f"Rooms explored: {map_summary.get('rooms_visited', 0)} / "
                 f"{map_summary.get('rooms_total', 0)}\n"
                 f"Unexplored exits: {map_summary.get('unexplored_exits_count', 0)}\n"
             )
+            nearest = context.get("nearest_unexplored")
+            if nearest:
+                map_text += (
+                    f"Nearest unexplored: {nearest['target_room']} "
+                    f"(go: {' -> '.join(nearest['path'])})\n"
+                )
+            parts.append(map_text)
 
         # Open puzzles
         open_puzzles = context.get("open_puzzles", [])
@@ -178,8 +185,9 @@ class GameAgent:
                 puzzle_lines.append(line)
             parts.append(f"== OPEN PUZZLES ({len(open_puzzles)}) ==\n" + "\n".join(puzzle_lines) + "\n")
 
-        # Puzzle suggestions
+        # Puzzle suggestions with navigation
         suggestions = context.get("puzzle_suggestions", [])
+        navigation_hints = context.get("navigation_hints", {})
         if suggestions:
             sugg_lines = []
             for s in suggestions:
@@ -188,17 +196,30 @@ class GameAgent:
                 )
                 if s.items_to_use:
                     sugg_lines.append(f"  Items: {', '.join(s.items_to_use)}")
+                # Add navigation directions if puzzle is in a different room
+                if hasattr(s, 'location') and s.location and s.location in navigation_hints:
+                    path = navigation_hints[s.location]
+                    sugg_lines.append(f"  Navigate: {' -> '.join(path)}")
             parts.append(
                 f"== PUZZLE SUGGESTIONS ==\n" + "\n".join(sugg_lines) + "\n"
+            )
+
+        # Navigation hints for open puzzles in other rooms
+        if navigation_hints:
+            nav_lines = []
+            for location, path in navigation_hints.items():
+                nav_lines.append(f"- To {location}: {' -> '.join(path)}")
+            parts.append(
+                f"== NAVIGATION (paths to puzzle locations) ==\n" + "\n".join(nav_lines) + "\n"
             )
 
         # Recent actions
         recent_actions = context.get("recent_actions", [])
         if recent_actions:
             action_lines = []
-            for cmd, result in recent_actions[-10:]:  # Last 10 actions
+            for cmd, result in recent_actions[-20:]:  # Last 20 actions
                 # Truncate long results
-                short_result = result[:100] + "..." if len(result) > 100 else result
+                short_result = result[:200] + "..." if len(result) > 200 else result
                 action_lines.append(f"> {cmd}\n  {short_result}")
             parts.append(
                 f"== RECENT ACTIONS ==\n" + "\n".join(action_lines) + "\n"

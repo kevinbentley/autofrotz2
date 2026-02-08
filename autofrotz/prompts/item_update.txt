@@ -20,12 +20,12 @@ The item_id field should be normalized:
 - Spaces replaced with underscores
 - Strip leading articles (the, a, an)
 - Remove non-alphanumeric characters except underscores
-- Example: "The brass lantern" → "brass_lantern"
+- Example: "The iron shield" → "iron_shield"
 
 # Location Field
 
 Location can be:
-- A room ID (e.g., "west_of_house")
+- A room ID (e.g., "village_square")
 - "inventory" for items in player's possession
 - "unknown" for items whose location is uncertain
 - null if location is not relevant to this update
@@ -51,9 +51,9 @@ Set properties to null if no property changes are detected.
 
 Game output:
 ```
-West of House
-You are standing in an open field west of a white house, with a boarded front door.
-There is a small mailbox here.
+Village Square
+You are in a bustling village square. A stone fountain stands in the center.
+There is a wooden crate here.
 ```
 
 Response:
@@ -61,17 +61,17 @@ Response:
 {
   "updates": [
     {
-      "item_id": "white_house",
-      "name": "white house",
+      "item_id": "stone_fountain",
+      "name": "stone fountain",
       "change_type": "new",
-      "location": "west_of_house",
+      "location": "village_square",
       "properties": {"portable": false}
     },
     {
-      "item_id": "mailbox",
-      "name": "small mailbox",
+      "item_id": "wooden_crate",
+      "name": "wooden crate",
       "change_type": "new",
-      "location": "west_of_house",
+      "location": "village_square",
       "properties": null
     }
   ]
@@ -82,7 +82,7 @@ Response:
 
 Game output:
 ```
-> take lamp
+> take sword
 Taken.
 ```
 
@@ -91,8 +91,8 @@ Response:
 {
   "updates": [
     {
-      "item_id": "lamp",
-      "name": "lamp",
+      "item_id": "sword",
+      "name": "sword",
       "change_type": "taken",
       "location": "inventory",
       "properties": null
@@ -105,8 +105,8 @@ Response:
 
 Game output:
 ```
-> open mailbox
-Opening the small mailbox reveals a leaflet.
+> open crate
+Opening the wooden crate reveals a silver key.
 ```
 
 Response:
@@ -114,17 +114,17 @@ Response:
 {
   "updates": [
     {
-      "item_id": "mailbox",
-      "name": "small mailbox",
+      "item_id": "wooden_crate",
+      "name": "wooden crate",
       "change_type": "state_change",
       "location": null,
       "properties": {"open": true}
     },
     {
-      "item_id": "leaflet",
-      "name": "leaflet",
+      "item_id": "silver_key",
+      "name": "silver key",
       "change_type": "new",
-      "location": "mailbox",
+      "location": "wooden_crate",
       "properties": null
     }
   ]
@@ -135,8 +135,8 @@ Response:
 
 Game output:
 ```
-> eat garlic
-Thank you very much. I was rather hungry.
+> eat bread
+That was delicious. You feel refreshed.
 ```
 
 Response:
@@ -144,8 +144,8 @@ Response:
 {
   "updates": [
     {
-      "item_id": "garlic",
-      "name": "garlic",
+      "item_id": "bread",
+      "name": "bread",
       "change_type": "gone",
       "location": "unknown",
       "properties": null
@@ -173,9 +173,9 @@ Response:
 
 Game output:
 ```
-> light lamp with match
-The brass lantern is now on.
-The match has burned away.
+> light torch with flint
+The torch flickers to life, casting warm light around you.
+The flint crumbles to dust.
 ```
 
 Response:
@@ -183,15 +183,15 @@ Response:
 {
   "updates": [
     {
-      "item_id": "brass_lantern",
-      "name": "brass lantern",
+      "item_id": "torch",
+      "name": "torch",
       "change_type": "state_change",
       "location": null,
       "properties": {"lit": true}
     },
     {
-      "item_id": "match",
-      "name": "match",
+      "item_id": "flint",
+      "name": "flint",
       "change_type": "gone",
       "location": "unknown",
       "properties": null

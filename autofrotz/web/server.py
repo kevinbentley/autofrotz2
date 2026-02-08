@@ -4,6 +4,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from typing import Optional
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -21,9 +22,13 @@ class ConnectionManager:
 
     def __init__(self):
         self.active_connections: list[WebSocket] = []
+        self.loop: asyncio.AbstractEventLoop | None = None
 
     async def connect(self, websocket: WebSocket):
         """Accept and register a new WebSocket connection."""
+        # Capture the running event loop so sync code can schedule broadcasts
+        if self.loop is None:
+            self.loop = asyncio.get_running_loop()
         await websocket.accept()
         self.active_connections.append(websocket)
         logger.info(f"WebSocket connected. Total connections: {len(self.active_connections)}")
@@ -54,6 +59,12 @@ connection_manager = ConnectionManager()
 
 # Create FastAPI app
 app = FastAPI(title="AutoFrotz v2 Monitoring", version="2.0.0")
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Capture the event loop so sync code can schedule broadcasts."""
+    connection_manager.loop = asyncio.get_running_loop()
 
 
 @app.get("/api/games")

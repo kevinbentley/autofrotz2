@@ -73,11 +73,10 @@ class MockLLM(BaseLLM):
 
 
 class MockDatabase(Database):
-    """Mock database for testing."""
+    """Mock database using real in-memory SQLite for testing."""
 
     def __init__(self, db_path: str = ":memory:"):
-        # Don't call super().__init__() to avoid creating real database
-        self.db_path = db_path
+        super().__init__(db_path)
 
 
 @pytest.fixture

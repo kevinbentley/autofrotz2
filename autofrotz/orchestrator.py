@@ -44,7 +44,7 @@ class Orchestrator:
     SAVE_INTERVAL = 25
 
     # Puzzle agent evaluation frequency (every N turns unless triggered)
-    PUZZLE_EVAL_INTERVAL = 3
+    PUZZLE_EVAL_INTERVAL = 1  # Run every turn; gpt-4o-mini is cheap and stale puzzles hurt
 
     def __init__(self, config: dict) -> None:
         """
@@ -106,6 +106,7 @@ class Orchestrator:
         self._previous_room_id: str | None = None
         self._previous_inventory_count = 0
         self._last_action_failed = False
+        self._last_command = "look"  # Command that produced the current game_output
 
         # Maze-solving state
         self._maze_dfs_stack: list[tuple[str, list[str]]] = []
@@ -225,9 +226,13 @@ class Orchestrator:
                     self._end_game("won")
                     return
 
-                # Periodic save
-                if (self._turn_number - self._last_save_turn) >= self.SAVE_INTERVAL:
-                    self._save_game(self._next_save_slot())
+                # Periodic save (disabled -- pyFrotz save corrupts game state)
+                # if (self._turn_number - self._last_save_turn) >= self.SAVE_INTERVAL:
+                #     try:
+                #         self._save_game(self._next_save_slot())
+                #     except Exception as e:
+                #         logger.warning(f"Periodic save failed (non-fatal): {e}")
+                #         self._last_save_turn = self._turn_number
 
             # Max turns reached
             logger.warning(f"Max turns ({self.max_turns}) reached")
@@ -267,7 +272,7 @@ class Orchestrator:
         self._fire_hooks("on_turn_start", turn_number=turn_number, room_id=current_room_id)
 
         # Phase 1: Parse map
-        room_update = self.map_manager.update_from_game_output(game_output, "look")
+        room_update = self.map_manager.update_from_game_output(game_output, self._last_command)
         self._collect_manager_metrics(turn_number, "map_parser", self.map_manager.get_last_metrics())
 
         # Track room changes for puzzle trigger detection
@@ -291,7 +296,7 @@ class Orchestrator:
 
         # Phase 2: Parse items
         item_updates = self.item_manager.update_from_game_output(
-            game_output, current_room_id, "look", current_turn=turn_number
+            game_output, current_room_id, self._last_command, current_turn=turn_number
         )
         self._collect_manager_metrics(turn_number, "item_parser", self.item_manager.get_last_metrics())
 
@@ -351,7 +356,7 @@ class Orchestrator:
             all_items = self.item_manager.get_all_items()
             map_summary = self.map_manager.get_map_summary()
 
-            new_puzzles, suggestions = self.puzzle_agent.evaluate(
+            new_puzzles, suggestions, solved_ids = self.puzzle_agent.evaluate(
                 game_output=game_output,
                 current_room=current_room,
                 inventory=current_inventory,
@@ -373,6 +378,20 @@ class Orchestrator:
                     description=puzzle.description,
                 )
 
+            # Fire solved puzzle hooks
+            for pid in solved_ids:
+                # Look up description for the hook
+                all_puzzles = self.database.get_puzzles(self.game_id)
+                desc = next(
+                    (p.description for p in all_puzzles if p.puzzle_id == pid),
+                    f"Puzzle #{pid}",
+                )
+                self._fire_hooks(
+                    "on_puzzle_solved",
+                    puzzle_id=pid,
+                    description=desc,
+                )
+
         # Check for stuck behavior (every turn, no LLM call)
         stuck_suggestion = self.puzzle_agent.detect_stuck(
             self._recent_actions, self._recent_rooms
@@ -392,6 +411,7 @@ class Orchestrator:
 
         # Phase 7: Execute command
         new_output = self.game_interface.do_command(command)
+        self._last_command = command
 
         # Track if the action appeared to fail (for puzzle eval triggers)
         self._last_action_failed = self._is_failure_output(new_output)
@@ -448,7 +468,7 @@ class Orchestrator:
         self._fire_hooks("on_turn_start", turn_number=turn_number, room_id=current_room_id)
 
         # Phase 1: Update map from last output
-        room_update = self.map_manager.update_from_game_output(game_output, "look")
+        room_update = self.map_manager.update_from_game_output(game_output, self._last_command)
         self._collect_manager_metrics(turn_number, "map_parser", self.map_manager.get_last_metrics())
 
         if room_update.room_id:
@@ -456,7 +476,7 @@ class Orchestrator:
 
         # Phase 2: Update items
         self.item_manager.update_from_game_output(
-            game_output, current_room_id, "look", current_turn=turn_number
+            game_output, current_room_id, self._last_command, current_turn=turn_number
         )
         self._collect_manager_metrics(turn_number, "item_parser", self.item_manager.get_last_metrics())
 
@@ -465,6 +485,7 @@ class Orchestrator:
 
         # Execute
         new_output = self.game_interface.do_command(command)
+        self._last_command = command
 
         # Update recent actions
         self._recent_actions.append((command, new_output))
@@ -651,6 +672,30 @@ class Orchestrator:
         in_progress = self.database.get_puzzles(self.game_id, status="in_progress")
         all_open = open_puzzles + in_progress
 
+        # Compute navigation directions for puzzle locations
+        navigation_hints = {}
+        for puzzle in all_open:
+            if puzzle.location and puzzle.location != room_id:
+                try:
+                    path = self.map_manager.get_path(room_id, puzzle.location)
+                    if path:
+                        navigation_hints[puzzle.location] = path
+                except Exception:
+                    pass  # No path found
+
+        # Get nearest unexplored exit info
+        nearest_unexplored = None
+        try:
+            nearest = self.map_manager.get_nearest_unexplored(room_id)
+            if nearest:
+                target_room, path = nearest
+                nearest_unexplored = {
+                    "target_room": target_room,
+                    "path": path,
+                }
+        except Exception:
+            pass
+
         return {
             "game_output": game_output,
             "room": current_room,
@@ -659,8 +704,10 @@ class Orchestrator:
             "map_summary": map_summary,
             "open_puzzles": all_open,
             "puzzle_suggestions": suggestions,
-            "recent_actions": self._recent_actions[-10:],
+            "recent_actions": self._recent_actions[-20:],
             "special_instructions": self._special_instructions,
+            "navigation_hints": navigation_hints,
+            "nearest_unexplored": nearest_unexplored,
         }
 
     def _fire_hooks(self, method_name: str, **kwargs) -> None:

@@ -42,11 +42,8 @@ class GameInterface:
         r"\*\*\*\s*You have won\s*\*\*\*",
         r"You have won",
         r"Congratulations!.*won",
-        r"The End",
-        r"THE END",
         r"\*\*\*\s*The End\s*\*\*\*",
         r"You have finished",
-        r"Your score is \d+ of a possible \d+.*in \d+ moves?",
     ]
 
     def __init__(self, game_file: str) -> None:

@@ -123,7 +123,7 @@ class MapManager:
         )
 
         # Save to database
-        # TODO: request from storage agent - specific room save method
+        self.db.save_room(self.game_id, room)
         logger.debug(f"Added room: {room.room_id} ({room.name})")
 
     def _add_connection(
@@ -185,7 +185,41 @@ class MapManager:
             exits[direction] = to_room
             self.graph.nodes[from_room]['exits'] = exits
 
-        # TODO: request from storage agent - specific connection save method
+        # Save forward connection to database
+        conn_obj = Connection(
+            from_room_id=from_room,
+            to_room_id=to_room,
+            direction=direction,
+            bidirectional=bidirectional,
+            blocked=blocked,
+            block_reason=block_reason,
+            teleport=teleport,
+            random=random,
+            observed_destinations=[to_room] if random else [],
+        )
+        self.db.save_connection(self.game_id, conn_obj)
+
+        # Save reverse connection if bidirectional
+        if bidirectional:
+            reverse_conn = Connection(
+                from_room_id=to_room,
+                to_room_id=from_room,
+                direction=self._reverse_direction(direction),
+                bidirectional=True,
+                blocked=blocked,
+                block_reason=block_reason,
+                teleport=False,
+                random=False,
+                observed_destinations=[],
+            )
+            self.db.save_connection(self.game_id, reverse_conn)
+
+        # Save updated room exits to database
+        if from_room in self.graph.nodes:
+            room = self.get_room(from_room)
+            if room:
+                self.db.save_room(self.game_id, room)
+
         logger.debug(f"Added connection: {from_room} --{direction}--> {to_room}")
 
     def _reverse_direction(self, direction: str) -> str:
@@ -398,6 +432,11 @@ class MapManager:
                     if exit_dir not in existing_exits:
                         existing_exits[exit_dir] = None
                 self.graph.nodes[room_id]['exits'] = existing_exits
+
+                # Persist updated room to database
+                updated_room = self.get_room(room_id)
+                if updated_room:
+                    self.db.save_room(self.game_id, updated_room)
 
             # If we came from another room, create/update connection
             if self.current_room_id and self.current_room_id != room_id:
@@ -906,11 +945,54 @@ class MapManager:
 
         Reconstructs the graph from stored rooms, connections, and maze groups.
         """
-        # TODO: request from storage agent - specific load methods
-        # For now, this is a placeholder
         logger.info(f"Loading map state from database for game {self.game_id}")
-        # The database methods should be called here to populate:
-        # - self.graph nodes and edges
-        # - self.current_room_id
-        # - self._maze_groups
-        # - self._active_maze if a maze is in progress
+
+        # Load rooms and rebuild graph nodes
+        rooms = self.db.get_rooms(self.game_id)
+        for room in rooms:
+            self.graph.add_node(
+                room.room_id,
+                name=room.name,
+                description=room.description,
+                visited=room.visited,
+                visit_count=room.visit_count,
+                items_here=room.items_here,
+                maze_group=room.maze_group,
+                maze_marker_item=room.maze_marker_item,
+                is_dark=room.is_dark,
+                first_visited_turn=room.first_visited_turn,
+                last_visited_turn=room.last_visited_turn,
+                exits=room.exits,
+            )
+
+        # Track the most recently visited room as current
+        if rooms:
+            latest_room = max(rooms, key=lambda r: r.last_visited_turn or 0)
+            self.current_room_id = latest_room.room_id
+
+        # Load connections and rebuild graph edges
+        connections = self.db.get_connections(self.game_id)
+        for conn in connections:
+            self.graph.add_edge(
+                conn.from_room_id,
+                conn.to_room_id,
+                direction=conn.direction,
+                bidirectional=conn.bidirectional,
+                blocked=conn.blocked,
+                block_reason=conn.block_reason,
+                teleport=conn.teleport,
+                random=conn.random,
+                observed_destinations=conn.observed_destinations,
+            )
+
+        # Load maze groups
+        maze_groups = self.db.get_maze_groups(self.game_id)
+        for mg in maze_groups:
+            self._maze_groups[mg.group_id] = mg
+            if not mg.fully_mapped:
+                self._active_maze = mg.group_id
+
+        logger.info(
+            f"Loaded {len(rooms)} rooms, {len(connections)} connections, "
+            f"{len(maze_groups)} maze groups from database"
+        )

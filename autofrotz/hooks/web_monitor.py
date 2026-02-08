@@ -34,18 +34,25 @@ class WebMonitorHook(BaseHook):
         self._metrics: dict = {}
 
     def _broadcast(self, message: dict) -> None:
-        """Send a message to all WebSocket clients."""
+        """Send a message to all WebSocket clients.
+
+        The orchestrator calls hooks from a synchronous context in the main
+        thread, while uvicorn's event loop runs in a background thread.
+        We use run_coroutine_threadsafe to dispatch to the correct loop.
+        """
+        loop = connection_manager.loop
+        if loop is None or loop.is_closed():
+            logger.debug("No event loop available for WebSocket broadcast")
+            return
+
+        future = asyncio.run_coroutine_threadsafe(
+            connection_manager.broadcast(message), loop
+        )
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.ensure_future(connection_manager.broadcast(message))
-            else:
-                loop.run_until_complete(connection_manager.broadcast(message))
-        except RuntimeError:
-            # No event loop available -- create one and run
-            loop = asyncio.new_event_loop()
-            loop.run_until_complete(connection_manager.broadcast(message))
-            loop.close()
+            # Wait briefly to ensure the message is sent before the next turn
+            future.result(timeout=2.0)
+        except Exception as e:
+            logger.warning(f"Broadcast failed: {e}")
 
     def on_game_start(self, game_id: int, game_file: str) -> None:
         self._game_id = game_id
